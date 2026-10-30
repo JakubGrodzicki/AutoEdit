@@ -11,6 +11,8 @@
 .PARAMETER SkipModels  Pomija pobieranie modeli.
 .PARAMETER SkipTest    Pomija test GPU i testy jednostkowe na końcu.
 .PARAMETER Recreate    Usuwa i tworzy od nowa środowisko .venv.
+.PARAMETER LauncherOnly   Tylko buduje AutoEdit.exe (dwuklik zamiast terminala), nic więcej nie instaluje.
+.PARAMETER DesktopShortcut   Dodatkowo tworzy skrót AutoEdit na pulpicie.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -20,7 +22,9 @@ param(
     [switch]$CheckOnly,
     [switch]$SkipModels,
     [switch]$SkipTest,
-    [switch]$Recreate
+    [switch]$Recreate,
+    [switch]$LauncherOnly,
+    [switch]$DesktopShortcut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,6 +59,37 @@ function Find-Python312 {
     return $null
 }
 function Have-Winget { [bool](Get-Command winget -ErrorAction SilentlyContinue) }
+
+function Build-Launcher {
+    # Mały AutoEdit.exe kompilowany wbudowanym w Windows kompilatorem C# (csc.exe z .NET Framework 4, bez instalowania czegokolwiek).
+    Step 'Tworzenie AutoEdit.exe (uruchamianie programu dwuklikiem, bez terminala)'
+    $csc = Join-Path $env:windir 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    if (-not (Test-Path $csc)) { $csc = Join-Path $env:windir 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
+    if (-not (Test-Path $csc)) {
+        Warn 'Brak kompilatora .NET Framework (csc.exe), więc nie utworzono AutoEdit.exe. Program uruchomisz poleceniem: .venv\Scripts\python.exe -m autoedit.gui'
+        return
+    }
+    $exe = Join-Path $PSScriptRoot 'AutoEdit.exe'
+    $cscArgs = @('-nologo', '-target:winexe', '-codepage:65001', "-out:$exe",
+                 '-reference:System.Windows.Forms.dll', '-reference:System.Core.dll')
+    $ico = Join-Path $PSScriptRoot 'launcher\autoedit.ico'
+    if (Test-Path $ico) { $cscArgs += "-win32icon:$ico" }
+    $cscArgs += (Join-Path $PSScriptRoot 'launcher\AutoEdit.cs')
+    & $csc @cscArgs
+    if ($LASTEXITCODE -ne 0) { Fail "Kompilacja AutoEdit.exe nie powiodła się (kod $LASTEXITCODE)." }
+    Ok "Utworzono $exe"
+    if ($DesktopShortcut) {
+        $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AutoEdit.lnk'
+        $sh = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+        $sh.TargetPath = $exe
+        $sh.WorkingDirectory = $PSScriptRoot
+        $sh.IconLocation = $exe
+        $sh.Save()
+        Ok "Skrót na pulpicie: $lnk"
+    }
+}
+
+if ($LauncherOnly) { Build-Launcher; exit 0 }
 
 Write-Host "AutoEdit: instalacja" -ForegroundColor White
 Write-Host "Folder: $PSScriptRoot"
@@ -179,5 +214,7 @@ if ($SkipTest) {
     Run $VenvPy @('-m', 'pytest', '-q', 'tests') 'Testy jednostkowe nie przeszły'
 }
 
-Write-Host "`nGotowe. Uruchomienie programu:" -ForegroundColor Green
-Write-Host '   .venv\Scripts\python.exe -m autoedit.gui' -ForegroundColor White
+Build-Launcher
+
+Write-Host "`nGotowe. Uruchom program dwuklikiem w plik AutoEdit.exe (w tym folderze)." -ForegroundColor Green
+Write-Host '   Z terminala: .venv\Scripts\python.exe -m autoedit.gui' -ForegroundColor DarkGray

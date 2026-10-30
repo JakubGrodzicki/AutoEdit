@@ -46,8 +46,13 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 Skrypt można uruchamiać wielokrotnie: pomija to, co już jest, a pobieranie modeli wznawia. Parametry:
-`-CheckOnly` (tylko sprawdza wymagania), `-SkipModels`, `-SkipTest`, `-Recreate` (buduje `.venv` od nowa).
+`-CheckOnly` (tylko sprawdza wymagania), `-SkipModels`, `-SkipTest`, `-Recreate` (buduje `.venv` od nowa),
+`-DesktopShortcut` (skrót na pulpicie) i `-LauncherOnly` (tylko buduje `AutoEdit.exe`, nic więcej nie instaluje).
 Wymaga ok. 12 GB wolnego miejsca i połączenia z internetem. Po instalacji program działa offline.
+
+Na końcu skrypt tworzy w folderze programu plik **`AutoEdit.exe`**. To mały launcher (ok. 24 KB, kompilowany
+wbudowanym w Windows kompilatorem C#, źródło w `launcher/AutoEdit.cs`), więc nie trzeba niczego doinstalowywać.
+Plik nie jest częścią repozytorium, bo powstaje przy instalacji.
 
 <details>
 <summary>Instalacja ręczna</summary>
@@ -64,7 +69,10 @@ python -m venv .venv
 
 ## Użycie
 
-GUI:
+GUI: dwuklik w **`AutoEdit.exe`**. Okno terminala się nie pojawia. Komunikaty programu trafiają do `logs/autoedit.log`,
+a gdy program się wysypie lub nie jest jeszcze zainstalowany, launcher pokazuje czytelny komunikat zamiast zniknąć po cichu.
+
+Z terminala (to samo):
 
 ```bash
 .venv/Scripts/python.exe -m autoedit.gui

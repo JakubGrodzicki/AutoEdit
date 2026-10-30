@@ -10,3 +10,7 @@ output/
 *.wav
 *.xlsx
 *.log
+
+# launcher: AutoEdit.exe buduje install.ps1, logi powstają przy uruchomieniu
+AutoEdit.exe
+logs/
