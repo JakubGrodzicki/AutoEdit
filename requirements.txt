@@ -1,0 +1,12 @@
+# torch/torchaudio z indeksu CUDA 12.8:
+#   pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+faster-whisper==1.2.1
+ctranslate2==4.8.4
+transformers==5.22.1
+rapidfuzz==3.14.6
+soundfile==0.14.0
+openpyxl==3.1.5
+numpy==2.5.4
+num2words
+PySide6==6.12.0
+pytest

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# dane sesji (poufne, nie wchodzą do repozytorium)
+samples/
+cache/
+output/
+*.wav
+*.xlsx
+*.log
