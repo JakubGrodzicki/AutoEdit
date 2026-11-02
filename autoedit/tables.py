@@ -66,7 +66,7 @@ def load_lines(path: str | Path, columns: dict[str, int] | None = None, start_id
             i = cols.get(f)
             return r[i] if i is not None and i < len(r) else ""
         script, text = cell("script"), cell("text")
-        if not script:
+        if not script or text.casefold() == "line":  # nagłówek sekcji: "TYTUŁ | NPC CODE NAME | MAIN HERO | LINE"
             continue
         lines.append(Line(
             idx=start_idx + len(lines), script=script, character=cell("character"),

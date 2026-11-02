@@ -1,7 +1,7 @@
 """Pomiar jakości silnika względem gotowych editów.
 
 Użycie:  python evaluate.py sesja.wav edity_nazwane/ \
-                            output/projekt/project.json kwestie.xlsx
+                            output/projekt/.autoedit/project.json kwestie.xlsx
 
 Edity są obrobione, więc szukanie ich w całej sesji daje przypadkowe trafienia (cisza, szum tła).
 Zamiast tego, dla każdej kwestii, porównujemy edit z KAŻDYM takiem znalezionym przez silnik (wąskie okno

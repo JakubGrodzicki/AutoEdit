@@ -35,6 +35,9 @@ class MatchConfig:
     short_words: int = 3  # tyle słów i mniej: auto tylko z potwierdzeniem sąsiadów
     max_gap: float = 1.2  # forced alignment: maks. luka log-prob na token
     max_tail_gap: float = 1.6
+    max_span_gap: float = 3.0  # powyżej: w zakresie słychać inny tekst lub kolejne podejście, do przeglądu
+    max_pause: float = 2.0  # s, powyżej: długa przerwa w środku fragmentu, do przeglądu
+    gain_chars: float = 30.0  # kwestia tej długości zyskuje na ścieżce (score - base); krótsza proporcjonalnie mniej
 
 
 def passes_audio(c: Candidate, cfg: MatchConfig) -> bool:
@@ -139,7 +142,8 @@ def _extract(ln: Line, st: Stream, c0: int, text: str, cfg: MatchConfig) -> list
         if score < cfg.min_score:
             continue
         sc, ec = coverage(ln.norm, st.span(i0, i1))
-        out.append(Candidate(ln.idx, i0, i1, st.words[i0].start, st.words[i1].end, float(score), sc, ec))
+        out.append(Candidate(ln.idx, i0, i1, st.words[i0].start, st.words[i1].end, float(score), sc, ec,
+                             chars=len(ln.norm)))
     return out
 
 
@@ -159,7 +163,8 @@ def _iou(a: Candidate, b: Candidate) -> float:
 
 
 def best_path(cands: list[Candidate], cfg: MatchConfig) -> None:
-    """Zaznacza on_path na kandydatach należących do optymalnej ścieżki przez nagranie."""
+    """Zaznacza on_path na kandydatach należących do optymalnej ścieżki przez nagranie. Zysk rośnie z długością
+    kwestii, inaczej dwa wystąpienia krótkiego słowa wypierałyby całą kwestię, w której padają."""
     n = len(cands)
     for c in cands:
         c.on_path = False
@@ -191,7 +196,7 @@ def best_path(cands: list[Candidate], cfg: MatchConfig) -> None:
         val, pj = max(opts)
         if val <= 0:
             val, pj = 0.0, -1
-        dp[c] = (cc.score - cfg.base) + val
+        dp[c] = (cc.score - cfg.base) * cc.chars / cfg.gain_chars + val
         prev[c] = pj
         done[c] = True
     cur = max(range(n), key=lambda i: dp[i])
@@ -207,6 +212,10 @@ def finalize(lines: list[Line], cands: list[Candidate], cfg: MatchConfig) -> lis
     chain = sorted((c for c in cands if c.on_path), key=lambda c: c.start)
     pos = {id(c): k for k, c in enumerate(chain)}
     text_count = Counter(ln.norm for ln in lines if ln.norm)
+    starts = [c.start for c in chain]
+    for c in cands:  # kandydaci na ścieżce prawie się nie nakładają, więc wystarczy kilku ostatnich
+        k = bisect_right(starts, c.start + 0.05)
+        c.inside_other = any(p.line_idx != c.line_idx and c.end <= p.end + 0.05 for p in chain[max(0, k - 3):k])
 
     def neighbor_confirmed(c: Candidate) -> bool:
         k = pos[id(c)]
@@ -229,7 +238,7 @@ def finalize(lines: list[Line], cands: list[Candidate], cfg: MatchConfig) -> lis
         if not good:
             continue
         on = [c for c in good if c.on_path]
-        pool = on or good
+        pool = on or [c for c in good if not c.inside_other] or good
         complete = [c for c in pool if c.complete and passes_audio(c, cfg)]
         r.chosen = complete[-1] if complete else max(pool, key=lambda c: c.score)
         r.status = "przegląd"
@@ -237,7 +246,8 @@ def finalize(lines: list[Line], cands: list[Candidate], cfg: MatchConfig) -> lis
         if not on:
             r.reasons.append("fragment zajęty przez inną kwestię")
             continue
-        takes = [o for o in r.candidates if o.score >= cfg.auto_score and o.complete and passes_audio(o, cfg)]
+        takes = [o for o in r.candidates if o.score >= cfg.auto_score and o.complete and passes_audio(o, cfg)
+                 and not o.inside_other]  # fragment cudzej kwestii nie jest podejściem do tej
         if len(takes) > 1:  # kilka pełnych podejść: wybór należy do człowieka, ostatnie jest tylko domyślne
             r.reasons.append(f"{len(takes)} pełnych podejść do odsłuchu, domyślnie ostatnie")
         elif len(on) > 1:
@@ -259,6 +269,10 @@ def finalize(lines: list[Line], cands: list[Candidate], cfg: MatchConfig) -> lis
             why.append(f"konkurencyjna kwestia #{rival[0].line_idx}")
         if not passes_audio(c, cfg):
             why.append("audio nie potwierdza tekstu")
+        if (c.audio_span_gap or 0.0) > cfg.max_span_gap:
+            why.append("w zakresie słychać inny tekst lub kolejne podejście")
+        if (c.audio_pause or 0.0) > cfg.max_pause:
+            why.append("długa przerwa w środku fragmentu")
         if len(takes) > 1:
             why.append("wiele podejść")
         r.reasons += why

@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import subprocess
+from bisect import bisect_left
 from pathlib import Path
 from typing import Callable
 
@@ -77,6 +78,33 @@ def chunk_bounds(audio: np.ndarray, chunk_s: float = CHUNK_S, search_s: float = 
     return list(zip(cuts[:-1], cuts[1:]))
 
 
+VAD = {"threshold": 0.5, "min_silence_duration_ms": 2000, "speech_pad_ms": 400}
+
+
+class SpeechMap:
+    """Odtwarza czasy słów po wycięciu ciszy przez VAD.
+
+    faster-whisper wybiera fragment mowy po środku słowa. Pierwsze słowo po pauzie zwykle zaczyna się w ciszy
+    doklejonej przed fragmentem, więc dostawało czas wcześniejszy o całą wyciętą ciszę. Tu o fragmencie
+    decyduje koniec słowa, a początek nie może wypaść przed początkiem fragmentu."""
+
+    def __init__(self, chunks: list[dict]):
+        self.ends: list[float] = []  # koniec fragmentu na osi czasu bez ciszy
+        self.starts: list[float] = []  # początek fragmentu na osi czasu nagrania
+        self.shifts: list[float] = []  # ile ciszy wycięto przed fragmentem
+        removed = prev_end = 0
+        for c in chunks:
+            removed += c["start"] - prev_end
+            prev_end = c["end"]
+            self.ends.append((c["end"] - removed) / SR)
+            self.starts.append(c["start"] / SR)
+            self.shifts.append(removed / SR)
+
+    def restore(self, start: float, end: float) -> tuple[float, float]:
+        k = min(bisect_left(self.ends, end), len(self.ends) - 1)
+        return max(start + self.shifts[k], self.starts[k]), end + self.shifts[k]
+
+
 def find_holes(audio: np.ndarray, words: list[Word], block_s: float = 120.0, min_len: float = 0.4,
                max_covered: float = 0.1) -> list[tuple[float, float]]:
     """Fragmenty z głosem, w których Whisper nie zapisał (prawie) niczego."""
@@ -121,7 +149,7 @@ def fill_holes(asr, audio: np.ndarray, words: list[Word], progress=None) -> list
 
 
 def _cache_path(cache_dir: Path, wav16: Path, model: str, hint: str | None) -> Path:
-    tag = hashlib.sha1(f"{model}|{hint or ''}|chunks{int(CHUNK_S)}+fill".encode()).hexdigest()[:8]
+    tag = hashlib.sha1(f"{model}|{hint or ''}|chunks{int(CHUNK_S)}+fill+speechmap".encode()).hexdigest()[:8]
     return cache_dir / f"{wav16.name.split('.')[0]}.{tag}.words.json"
 
 
@@ -139,6 +167,7 @@ def transcribe(wav16: Path, cache_dir: str | Path, model: str = "large-v3", hint
         return set_norms([Word(**d) for d in json.loads(cp.read_text(encoding="utf-8"))])
 
     from faster_whisper import WhisperModel
+    from faster_whisper.vad import VadOptions, collect_chunks, get_speech_timestamps
 
     asr = WhisperModel(model, device="cuda", compute_type="float16")
     audio = load_audio16(wav16)
@@ -146,12 +175,17 @@ def transcribe(wav16: Path, cache_dir: str | Path, model: str = "large-v3", hint
     words: list[Word] = []
     for a, b in chunk_bounds(audio):
         off = a / SR
-        segments, _ = asr.transcribe(
-            audio[a:b], language="pl", word_timestamps=True, vad_filter=True,
-            condition_on_previous_text=False, hotwords=hint or None)
-        for seg in segments:
-            for w in seg.words or []:
-                words.append(Word(text=w.word.strip(), start=off + float(w.start), end=off + float(w.end)))
+        part = audio[a:b]
+        chunks = get_speech_timestamps(part, VadOptions(**VAD))
+        if chunks:
+            speech = SpeechMap(chunks)
+            segments, _ = asr.transcribe(
+                np.concatenate(collect_chunks(part, chunks)[0]), language="pl", word_timestamps=True, vad_filter=False,
+                condition_on_previous_text=False, hotwords=hint or None)
+            for seg in segments:
+                for w in seg.words or []:
+                    s, e = speech.restore(float(w.start), float(w.end))
+                    words.append(Word(text=w.word.strip(), start=off + s, end=off + e))
         if progress:
             progress(b / SR, total)
     words = fill_holes(asr, audio, words, progress)

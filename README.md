@@ -12,17 +12,24 @@ do żadnej usługi. Modele pobiera tylko `scripts/download_models.py`.
 ## Jak to działa
 
 1. **Arkusze:** jeden lub kilka plików xlsx/csv, kolumny rozpoznawane po nagłówkach (skrypt, postać, czy MC, treść).
-2. **Transkrypcja:** `faster-whisper` (large-v3, polski) z czasami słów. Nagranie idzie kawałkami cięty w ciszy,
-   a miejsca z głosem bez zapisanych słów są transkrybowane drugi raz osobno. Wynik jest w cache.
+2. **Transkrypcja:** `faster-whisper` (large-v3, polski) z czasami słów. Nagranie idzie kawałkami ciętymi w ciszy, VAD usuwa
+   długie pauzy, a czasy słów odtwarzamy sami: fragment wybiera koniec słowa, bo przy środku słowa (domyślnie w bibliotece)
+   pierwsze słowo po pauzie dostawało czas wcześniejszy o całą wyciętą ciszę. Miejsca z głosem bez zapisanych słów są
+   transkrybowane drugi raz osobno. Wynik jest w cache.
 3. **Dopasowanie:** podobieństwo znakowe (rapidfuzz), więc zniekształcone nazwy własne nadal się dopasowują.
    Globalna ścieżka po osi czasu (programowanie dynamiczne) obsługuje powtórki, kwestie nie po kolei i rozmowy.
-4. **Weryfikacja audio:** forced alignment (wav2vec2 CTC, `torchaudio.functional.forced_align`) daje dokładne granice
-   oraz niezależną od Whispera ocenę, czy audio mówi ten tekst, osobno dla końcówki kwestii.
+   Zysk kandydata rośnie z długością kwestii, więc krótkie słowa nie wypierają całych kwestii, w których padają.
+4. **Weryfikacja audio:** forced alignment (wav2vec2 CTC, własny Viterbi) daje dokładne granice oraz niezależną od Whispera
+   ocenę, czy audio mówi ten tekst, osobno dla końcówki kwestii. Ramki przed i po kwestii są darmowe, a cisza między głoskami
+   kosztuje, więc głoski nie uciekają na podobny dźwięk w sąsiedniej kwestii. Kandydaci na ścieżce i widoczni w przeglądzie
+   dostają granice z tego samego alignmentu.
 5. **Statusy:** `auto` tylko dla jednego, jednoznacznego, kompletnego take'a. Kwestie z kilkoma podejściami, krótkie,
-   niepewne i niewerbalne trafiają do przeglądu. Wybór take'a zawsze należy do człowieka.
+   niepewne i niewerbalne trafiają do przeglądu, podobnie jak zakres z obcym tekstem, kolejnym podejściem lub długą przerwą w środku.
+   Wybór take'a zawsze należy do człowieka.
 6. **GUI (PySide6):** lista kwestii, okno wyboru kandydata z odsłuchem, przeciąganymi granicami na fali i zatwierdzaniem.
-7. **Eksport:** cięcie z oryginalnego pliku (ta sama częstotliwość, głębia bitowa i kanały), padding 150 ms z prawdziwego
-   dźwięku (skracany, gdy blisko jest inna wypowiedź), krótkie fade'y. Nazwa pliku = nazwa skryptu.
+7. **Eksport:** „Eksportuj zatwierdzone” zapisuje same pliki WAV wprost do folderu wynikowego projektu. Cięcie z oryginalnego
+   pliku (ta sama częstotliwość, głębia bitowa i kanały), padding 150 ms z prawdziwego dźwięku (skracany, gdy w marginesie
+   po ciszy zaczyna się inna wypowiedź), krótkie fade'y. Nazwa pliku = nazwa skryptu.
 
 ## Wymagania
 
@@ -85,8 +92,12 @@ Z linii poleceń (przetwarzanie bez eksportu, potem przegląd w GUI):
 .venv/Scripts/python.exe -m autoedit.gui output/projekt
 ```
 
-Bez `--no-export` silnik od razu tnie kwestie ze statusem `auto`. Raport `raport.xlsx` w folderze wyniku
-pokazuje status, powody i listę kandydatów dla każdej kwestii.
+Bez `--no-export` silnik od razu tnie kwestie ze statusem `auto` do folderu wyniku.
+
+W folderze wyniku widać tylko pliki WAV. Pliki robocze (`project.json`, `meta.json`, `decisions.json`, `raport.xlsx`) są
+w ukrytym podfolderze `.autoedit`; `raport.xlsx` pokazuje status, powody i listę kandydatów dla każdej kwestii. „Wczytaj projekt”
+w GUI wskazuje folder wyniku. Starsze projekty z plikami wprost w folderze też się wczytają, a przy ponownym przetworzeniu
+ich pliki trafiają do `.autoedit`. Ponowne przetworzenie unieważnia zapisane decyzje (ich kopia to `decisions.old.json`).
 
 ## Testy
 
@@ -95,12 +106,16 @@ pokazuje status, powody i listę kandydatów dla każdej kwestii.
 ```
 
 Testy jednostkowe nie mierzą jakości na prawdziwym nagraniu. Do tego służą `build_truth.py` i `evaluate.py`
-(porównanie z ręcznie pociętymi editami), a `scripts/e2e_smoke.py` robi przejazd na syntetycznej sesji (głos Windows pl-PL).
+(porównanie z ręcznie pociętymi editami) oraz `scripts/audit_bounds.py <folder wyniku>` (Whisper na każdym wycinku i kontrola
+krawędzi cięcia, bez wzorca). `scripts/e2e_smoke.py` robi przejazd na syntetycznej sesji (głos Windows pl-PL).
 
 ## Status i ograniczenia
 
-- Progi weryfikacji audio (`max_gap`, `max_tail_gap` w `MatchConfig`) są wstępne i wymagają strojenia na prawdziwych sesjach.
-- Jakość mierzona dotąd na jednej sesji (jedna postać, polski).
+- Progi weryfikacji audio (`max_gap`, `max_tail_gap`, `max_span_gap`, `max_pause` w `MatchConfig`) są wstępne i wymagają
+  strojenia na prawdziwych sesjach.
+- Jakość mierzona z wzorcem na jednej sesji (jedna postać, polski), a bez wzorca, narzędziem `audit_bounds.py`, na kilku krótszych.
 - Kwestie niewerbalne (śmiech, warknięcia) dostają tylko propozycje z luk między sąsiednimi kwestiami, do ręcznego odsłuchu.
+- Bywa, że Whisper zlewa kilka podejść w jedno. Alignment zwykle wybiera wtedy pełne podejście, a gdy w zakresie zostaje
+  obcy tekst, kwestia idzie do przeglądu. Automatycznego rozdzielania podejść nie ma.
 - Podział kwestii MC i NPC jest na razie tylko filtrem na liście i nie wpływa na dopasowanie.
 - Nie wybrano jeszcze licencji.

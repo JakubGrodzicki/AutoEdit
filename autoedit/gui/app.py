@@ -84,6 +84,14 @@ class NewProjectDialog(QDialog):
         if not (self.audio.text() and tables and self.out.text()):
             QMessageBox.warning(self, "Brakuje danych", "Wskaż nagranie, co najmniej jedną tabelę i folder wynikowy.")
             return
+        if pipeline.has_project(Path(self.out.text())):
+            ans = QMessageBox.question(self, "W tym folderze jest już projekt",
+                                       "Przetworzenie od nowa zastąpi wyniki, a zapisane decyzje (zatwierdzenia i ręczne "
+                                       "granice) przestaną obowiązywać. Ich kopia zostanie w decisions.old.json.\n\n"
+                                       "Wyeksportowane wcześniej pliki WAV zostaną w folderze, dopóki eksport ich nie "
+                                       "nadpisze.\n\nKontynuować?")
+            if ans != QMessageBox.StandardButton.Yes:
+                return
         self.proc = QProcess(self)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUTF8", "1")
@@ -216,7 +224,8 @@ class ReviewDialog(QDialog):
         self.reasons.setText("; ".join(r.reasons))
         self.state.setText(STATE_LABEL[w.state_of(r)])
         self._loading = True
-        by_score = sorted(range(len(r.candidates)), key=lambda i: -r.candidates[i].score)
+        # fragmenty cudzych kwestii na końcu, żeby nie przysłaniały prawdziwych podejść
+        by_score = sorted(range(len(r.candidates)), key=lambda i: (r.candidates[i].inside_other, -r.candidates[i].score))
         good = [i for i in by_score if r.candidates[i].score >= 70 or r.candidates[i].origin == "gap"]
         self.order = good or by_score[:5]  # słabe dopasowania pokazujemy tylko, gdy nie ma nic lepszego
         self.cands.setRowCount(len(self.order))
@@ -324,9 +333,9 @@ class MainWindow(QMainWindow):
         self.resize(1280, 780)
         self.player = Player()
         self.out_dir: Path | None = None
+        self.work: Path | None = None  # folder plików roboczych projektu
         self.meta: dict = {}
         self.results: list[LineResult] = []
-        self.words = []
         self.decisions: dict[str, dict] = {}
         self.shown: list[int] = []  # indeksy results widoczne w tabeli
         self._review: ReviewDialog | None = None
@@ -356,7 +365,7 @@ class MainWindow(QMainWindow):
         self.btn_new = QPushButton("＋ Nowy projekt…")
         self.btn_open = QPushButton("📂 Otwórz wyniki")
         self.btn_load = QPushButton("Wczytaj projekt…")
-        self.btn_export = QPushButton("⬇ Eksportuj zatwierdzone…")
+        self.btn_export = QPushButton("⬇ Eksportuj zatwierdzone")
         for b in (self.btn_new, self.btn_open, self.btn_load, self.btn_export, self.btn_review):
             b.setMinimumHeight(38)
         self.btn_export.setMinimumHeight(46)
@@ -405,44 +414,39 @@ class MainWindow(QMainWindow):
         os.startfile(folder)
 
     def open_project(self) -> None:
-        """Wczytanie wcześniejszego wyniku: okno Eksploratora z plikami, wskazuje się project.json."""
+        """Wczytanie wcześniejszego wyniku: wskazuje się folder wynikowy podany przy tworzeniu projektu."""
         settings = QSettings("AutoEdit", "AutoEdit")
         start = settings.value("last_results_dir", str(ROOT / "output"))
-        f, _ = QFileDialog.getOpenFileName(self, "Otwórz wyniki - wskaż plik project.json", str(start),
-                                           "Wyniki AutoEdit (project.json meta.json);;Wszystkie pliki (*)")
-        if not f:
+        d = QFileDialog.getExistingDirectory(self, "Wczytaj projekt - wskaż folder wynikowy", str(start))
+        if not d:
             return
-        picked = Path(f)
-        # plik wskazany obok (np. w folderze z wyciętymi kwestiami) też zadziała, jeśli wynik jest piętro wyżej
-        folder = next((d for d in (picked.parent, picked.parent.parent)
-                       if (d / "meta.json").exists() and (d / "project.json").exists()), None)
-        if folder is None:
+        folder = Path(d).parent if Path(d).name == pipeline.WORK_DIR else Path(d)
+        if not pipeline.has_project(folder):
             QMessageBox.warning(self, "To nie jest wynik AutoEdit",
-                                f"W folderze:\n{picked.parent}\n\nnie ma plików meta.json i project.json.\n\n"
-                                "Wskaż plik project.json z folderu, który powstał po przetwarzaniu "
-                                "(np. output\\ludlof).")
+                                f"W folderze:\n{folder}\n\nnie ma projektu AutoEdit.\n\n"
+                                "Wskaż folder wynikowy podany przy tworzeniu projektu.")
             return
-        settings.setValue("last_results_dir", str(folder.resolve()))
         self.load(folder)
 
     def load(self, out_dir: Path) -> None:
         try:
-            self.meta, self.results, self.words = pipeline.load_project(out_dir)
+            self.meta, self.results = pipeline.load_project(out_dir)
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Nie można wczytać", f"{out_dir}\n\n{e}")
             return
         self.out_dir = out_dir
+        self.work = pipeline.work_dir(out_dir)
         QSettings("AutoEdit", "AutoEdit").setValue("last_results_dir", str(out_dir.resolve()))
-        dp = out_dir / "decisions.json"
+        dp = self.work / "decisions.json"
         self.decisions = json.loads(dp.read_text(encoding="utf-8")) if dp.exists() else {}
         self.setWindowTitle(f"AutoEdit - {out_dir.name}")
         self.fill_table()
         self.statusBar().showMessage(f"Wczytano {len(self.results)} kwestii.")
 
     def save_decisions(self) -> None:
-        if self.out_dir:
-            (self.out_dir / "decisions.json").write_text(json.dumps(self.decisions, ensure_ascii=False, indent=1),
-                                                         encoding="utf-8")
+        if self.work:
+            (self.work / "decisions.json").write_text(json.dumps(self.decisions, ensure_ascii=False, indent=1),
+                                                      encoding="utf-8")
 
     # ---------- stan kwestii ----------
     def state_of(self, r: LineResult) -> str:
@@ -505,7 +509,7 @@ class MainWindow(QMainWindow):
 
     def paint_row(self, row: int, r: LineResult) -> None:
         st = self.state_of(r)
-        texts = [c for c in r.candidates if c.origin == "text" and c.score >= 70]
+        texts = [c for c in r.candidates if c.origin == "text" and c.score >= 70 and not c.inside_other]
         best = f"{max(c.score for c in texts):.0f}%" if texts else ""
         vals = [r.line.script, r.line.character, STATE_LABEL[st], str(len(texts)) if texts else "", best, r.line.text]
         for col, v in enumerate(vals):
@@ -548,15 +552,11 @@ class MainWindow(QMainWindow):
             sel = self.selection_of(r)
             if sel is None:
                 continue
-            c = r.candidates[sel[0]]
-            items.append((r.line.script, sel[1], sel[2], (c.start, c.end) if c.origin == "text" else None))
+            items.append((r.line.script, sel[1], sel[2]))
         if not items:
             QMessageBox.information(self, "Eksport", "Brak zatwierdzonych kwestii.")
             return
-        d = QFileDialog.getExistingDirectory(self, f"Folder docelowy dla {len(items)} plików")
-        if not d:
-            return
-        out = Path(d)
+        out = self.out_dir
         existing = [n for n, *_ in items if (out / f"{export.safe_name(n)[0]}.wav").exists()]
         overwrite = False
         if existing:
@@ -565,8 +565,7 @@ class MainWindow(QMainWindow):
                                        "Nie = pominąć istniejące.",
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             overwrite = ans == QMessageBox.StandardButton.Yes
-        notes = export.export_selected(items, Path(self.meta["audio"]), out, self.words,
-                                       self.meta.get("pad", 0.15), overwrite)
+        notes = export.export_selected(items, Path(self.meta["audio"]), out, self.meta.get("pad", 0.15), overwrite)
         good = lambda v: v.startswith("ok") or v.startswith("zmieniono")  # noqa: E731
         skipped = [f"{k}: {v}" for k, v in notes.items() if not good(v)]
         msg = f"Zapisano {sum(good(v) for v in notes.values())} z {len(items)} plików do:\n{out}"

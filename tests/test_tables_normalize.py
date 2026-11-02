@@ -32,6 +32,27 @@ def test_load_csv(tmp_path):
     assert lines[1].kind == "nonverbal"
 
 
+def test_section_header_rows_are_not_lines(tmp_path):
+    p = tmp_path / "a.csv"
+    p.write_text("TYTUŁ;NPC CODE NAME;MAIN HERO;LINE\nVO_001;Gracz;NIE;Idę.\nTYTUŁ 2;NPC CODE NAME;MAIN HERO;LINE\n"
+                 "VO_002;Gracz;TAK;Wracam.\n", encoding="utf-8")
+    lines = load_lines(p)
+    assert [(l.idx, l.script) for l in lines] == [(0, "VO_001"), (1, "VO_002")]
+    assert not lines[0].is_main and lines[1].is_main
+
+
+def test_speech_map_keeps_first_word_after_pause_in_its_chunk():
+    from autoedit.transcribe import SR, SpeechMap
+    m = SpeechMap([{"start": 1 * SR, "end": 3 * SR}, {"start": 8 * SR, "end": 10 * SR}])
+    assert m.restore(0.5, 1.0) == (1.5, 2.0)  # przed pierwszym fragmentem wycięto 1 s ciszy
+    assert m.restore(1.5, 2.0) == (2.5, 3.0)  # koniec dokładnie na granicy: nadal pierwszy fragment
+    assert m.restore(2.5, 2.9) == (8.5, 8.9)  # przed drugim wycięto łącznie 6 s
+    # słowo zaczyna się na końcu pierwszego fragmentu, kończy w drugim: należy do drugiego (środek wskazałby pierwszy),
+    # a początek nie może wypaść przed drugim fragmentem
+    assert m.restore(1.8, 2.1) == (8.0, 8.1)
+    assert m.restore(3.9, 4.2) == (9.9, 10.2)  # poza ostatnim fragmentem: ostatnie przesunięcie
+
+
 def test_for_aligner_only_touches_foreign_spellings():
     from autoedit.normalize import for_aligner
     assert for_aligner("xalthorak") == "ksaltorak"

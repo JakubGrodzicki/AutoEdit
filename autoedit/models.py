@@ -35,9 +35,13 @@ class Candidate:
     end_cov: float = 1.0
     audio_gap: float | None = None  # forced alignment: luka log-prob na token
     audio_tail_gap: float | None = None
+    audio_span_gap: float | None = None  # luka w całym zakresie: czy obok tekstu kwestii słychać inną mowę
+    audio_pause: float | None = None  # najdłuższa przerwa między głoskami, s
     refined: tuple[float, float] | None = None  # granice po forced alignment
     on_path: bool = False
     origin: str = "text"  # text | gap
+    chars: int = 30  # długość tekstu kwestii, waga kandydata na ścieżce
+    inside_other: bool = False  # leży w całości w kandydacie ze ścieżki innej kwestii
 
     @property
     def complete(self) -> bool:
