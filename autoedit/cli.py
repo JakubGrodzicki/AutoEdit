@@ -17,9 +17,11 @@ def main() -> None:
     ap.add_argument("--no-export", action="store_true", help="tylko raport, bez cięcia")
     ap.add_argument("--pad", type=float, default=0.15, help="padding w sekundach")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--who", choices=("npc", "main"),
+                    help="czyje kwestie są w nagraniu: npc (Czy MC = NIE) albo main (Czy MC = TAK); domyślnie wszystkie")
     a = ap.parse_args()
     pipeline.run(a.audio, a.tables, a.out, a.cache, use_hint=a.hint, do_align=not a.no_align,
-                 do_export=not a.no_export, pad=a.pad, overwrite=a.overwrite)
+                 do_export=not a.no_export, pad=a.pad, overwrite=a.overwrite, who=a.who)
 
 
 if __name__ == "__main__":

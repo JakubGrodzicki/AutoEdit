@@ -12,6 +12,8 @@ do żadnej usługi. Modele pobiera tylko `scripts/download_models.py`.
 ## Jak to działa
 
 1. **Arkusze:** jeden lub kilka plików xlsx/csv, kolumny rozpoznawane po nagłówkach (skrypt, postać, czy MC, treść).
+   Arkusz zawiera kwestie NPC i głównego bohatera, a nagrywają je różni aktorzy. Przy nowym projekcie wybiera się, czyje to
+   nagranie („Nagranie aktora” w GUI, `--who npc|main` w CLI), i do dopasowania idą tylko kwestie tej grupy.
 2. **Transkrypcja:** `faster-whisper` (large-v3, polski) z czasami słów. Nagranie idzie kawałkami ciętymi w ciszy, VAD usuwa
    długie pauzy, a czasy słów odtwarzamy sami: fragment wybiera koniec słowa, bo przy środku słowa (domyślnie w bibliotece)
    pierwsze słowo po pauzie dostawało czas wcześniejszy o całą wyciętą ciszę. Miejsca z głosem bez zapisanych słów są
@@ -88,11 +90,12 @@ Z terminala (to samo):
 Z linii poleceń (przetwarzanie bez eksportu, potem przegląd w GUI):
 
 ```bash
-.venv/Scripts/python.exe -m autoedit.cli sesja.wav kwestie.xlsx -o output/projekt --no-export
+.venv/Scripts/python.exe -m autoedit.cli sesja.wav kwestie.xlsx -o output/projekt --no-export --who npc
 .venv/Scripts/python.exe -m autoedit.gui output/projekt
 ```
 
-Bez `--no-export` silnik od razu tnie kwestie ze statusem `auto` do folderu wyniku.
+Bez `--no-export` silnik od razu tnie kwestie ze statusem `auto` do folderu wyniku. `--who npc` bierze tylko kwestie
+z „Czy MC = NIE”, `--who main` tylko z „TAK”; bez flagi dopasowywane są wszystkie wiersze arkusza.
 
 W folderze wyniku widać tylko pliki WAV. Pliki robocze (`project.json`, `meta.json`, `decisions.json`, `raport.xlsx`) są
 w ukrytym podfolderze `.autoedit`; `raport.xlsx` pokazuje status, powody i listę kandydatów dla każdej kwestii. „Wczytaj projekt”
@@ -117,5 +120,5 @@ krawędzi cięcia, bez wzorca). `scripts/e2e_smoke.py` robi przejazd na syntetyc
 - Kwestie niewerbalne (śmiech, warknięcia) dostają tylko propozycje z luk między sąsiednimi kwestiami, do ręcznego odsłuchu.
 - Bywa, że Whisper zlewa kilka podejść w jedno. Alignment zwykle wybiera wtedy pełne podejście, a gdy w zakresie zostaje
   obcy tekst, kwestia idzie do przeglądu. Automatycznego rozdzielania podejść nie ma.
-- Podział kwestii MC i NPC jest na razie tylko filtrem na liście i nie wpływa na dopasowanie.
+- Podział kwestii MC i NPC opiera się wyłącznie na kolumnie „Czy MC”. Arkusz bez niej traktuje wszystkie kwestie jako NPC.
 - Nie wybrano jeszcze licencji.

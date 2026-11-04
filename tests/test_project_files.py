@@ -61,6 +61,18 @@ def test_load_matches_results_to_sheet_by_script_not_index(tmp_path):
                                                                           (1, "VO_002", "Wracam po zmroku.")]
 
 
+def test_load_applies_chosen_actor(tmp_path):
+    out = tmp_path / "wynik"
+    sheet = tmp_path / "kwestie.csv"
+    sheet.write_text("TYTUŁ;NPC CODE NAME;MAIN HERO;LINE\nVO_001;X;NIE;Idę na północ.\nVO_002;G;TAK;Tak.\n"
+                     "VO_003;X;NIE;Wracam po zmroku.\n", encoding="utf-8")
+    write_project(out, sheet, [record(0, "VO_001"), record(1, "VO_003")])
+    meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+    (out / "meta.json").write_text(json.dumps(dict(meta, who="npc")), encoding="utf-8")
+    _, results = pipeline.load_project(out)
+    assert [(r.line.idx, r.line.script) for r in results] == [(0, "VO_001"), (1, "VO_003")]
+
+
 def test_old_candidates_load_without_new_fields(tmp_path):
     out = tmp_path / "wynik"
     cand = {"line_idx": 0, "w0": 0, "w1": 1, "start": 1.0, "end": 2.0, "score": 100.0, "start_cov": 1.0, "end_cov": 1.0,

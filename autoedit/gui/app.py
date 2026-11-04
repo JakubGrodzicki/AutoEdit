@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDial
                                QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
                                QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .. import export, pipeline
+from .. import export, pipeline, tables
 from ..models import Candidate, LineResult
 from .player import Player
 from .waveform import Waveform
@@ -48,6 +48,11 @@ class NewProjectDialog(QDialog):
             b.clicked.connect(fn)
             row.addWidget(b)
             form.addRow(label, row)
+        self.who = QComboBox()  # kwestie drugiego aktora z tego samego arkusza nie biorą udziału w dopasowaniu
+        self.who.addItem("NPC (Czy MC = NIE)", "npc")
+        self.who.addItem("Głównego bohatera (Czy MC = TAK)", "main")
+        self.who.setCurrentIndex(max(0, self.who.findData(QSettings("AutoEdit", "AutoEdit").value("who", "npc"))))
+        form.addRow("Nagranie aktora", self.who)
         self.log = QPlainTextEdit(readOnly=True)
         self.run_btn = QPushButton("Uruchom przetwarzanie")
         self.run_btn.clicked.connect(self.start)
@@ -104,8 +109,10 @@ class NewProjectDialog(QDialog):
         self.proc.finished.connect(self.on_finished)
         self.run_btn.setEnabled(False)
         self.log.appendPlainText("Start…")
+        who = self.who.currentData()
+        QSettings("AutoEdit", "AutoEdit").setValue("who", who)
         self.proc.start(sys.executable, ["-m", "autoedit.cli", self.audio.text(), *tables, "-o", self.out.text(),
-                                         "--cache", str(ROOT / "cache"), "--no-export"])
+                                         "--cache", str(ROOT / "cache"), "--no-export", "--who", who])
 
     def on_finished(self, code: int, _status) -> None:  # nie "done": to nadpisałoby QDialog.done(int)
         self.run_btn.setEnabled(True)
@@ -382,7 +389,8 @@ class MainWindow(QMainWindow):
         top.addSpacing(24)
         top.addWidget(QLabel("Stan:"))
         top.addWidget(self.f_state)
-        top.addWidget(QLabel("Kwestie:"))
+        self.f_who_label = QLabel("Kwestie:")
+        top.addWidget(self.f_who_label)
         top.addWidget(self.f_who)
         top.addStretch()
         top.addWidget(self.btn_review)
@@ -439,7 +447,14 @@ class MainWindow(QMainWindow):
         QSettings("AutoEdit", "AutoEdit").setValue("last_results_dir", str(out_dir.resolve()))
         dp = self.work / "decisions.json"
         self.decisions = json.loads(dp.read_text(encoding="utf-8")) if dp.exists() else {}
-        self.setWindowTitle(f"AutoEdit - {out_dir.name}")
+        who = self.meta.get("who")
+        # projekt z wybranym aktorem ma kwestie tylko jednej grupy, więc filtr NPC/MC zostaje dla starszych projektów
+        if who:
+            self.f_who.setCurrentIndex(0)
+        self.f_who.setVisible(who is None)
+        self.f_who_label.setVisible(who is None)
+        role = f" ({tables.ROLE_LABEL[who]})" if who else ""
+        self.setWindowTitle(f"AutoEdit - {out_dir.name}{role}")
         self.fill_table()
         self.statusBar().showMessage(f"Wczytano {len(self.results)} kwestii.")
 
@@ -519,9 +534,10 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, col, it)
 
     def summary_refresh(self) -> None:
-        counts = {k: sum(self.state_of(r) == k for r in self.results if not r.line.is_main)
-                  for k in ("accepted", "pending", "rejected", "none")}
-        self.summary.setText(f"NPC: zatwierdzone {counts['accepted']} · do przeglądu {counts['pending']} · "
+        who = self.meta.get("who")
+        mine = self.results if who else [r for r in self.results if not r.line.is_main]
+        counts = {k: sum(self.state_of(r) == k for r in mine) for k in ("accepted", "pending", "rejected", "none")}
+        self.summary.setText(f"{tables.ROLE_LABEL[who or 'npc']}: zatwierdzone {counts['accepted']} · do przeglądu {counts['pending']} · "
                              f"odrzucone {counts['rejected']} · nie znaleziono {counts['none']}   ")
 
     # ---------- przegląd ----------

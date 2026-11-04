@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from pathlib import Path
 
 import openpyxl
@@ -81,6 +82,21 @@ def load_all(paths: list[str | Path]) -> list[Line]:
     for p in paths:
         lines += load_lines(p, start_idx=len(lines))
     return lines
+
+
+ROLE_LABEL = {"npc": "NPC", "main": "MC"}
+
+
+def select_role(lines: list[Line], who: str | None) -> list[Line]:
+    """Kwestie jednego aktora: "npc" (Czy MC = NIE) albo "main" (Czy MC = TAK); None = wszystkie.
+    Numeracja od nowa, bo premia ścieżki za kolejną kwestię liczy się po idx + 1."""
+    if who is None:
+        return lines
+    keep = [ln for ln in lines if ln.is_main == (who == "main")]
+    if not keep:
+        raise ValueError("Arkusz nie ma kwestii oznaczonych jako MC (kolumna Czy MC = TAK)." if who == "main"
+                         else "Wszystkie kwestie arkusza są oznaczone jako MC (kolumna Czy MC = TAK).")
+    return [replace(ln, idx=i) for i, ln in enumerate(keep)]
 
 
 def duplicate_scripts(lines: list[Line]) -> dict[str, list[int]]:

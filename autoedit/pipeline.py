@@ -65,7 +65,7 @@ def load_project(out_dir: Path) -> tuple[dict, list[LineResult]]:
     work = work_dir(out_dir)
     meta = json.loads((work / "meta.json").read_text(encoding="utf-8"))
     by_script: dict[str, list[Line]] = {}
-    for ln in tables.load_all([Path(t) for t in meta["tables"]]):
+    for ln in tables.select_role(tables.load_all([Path(t) for t in meta["tables"]]), meta.get("who")):
         by_script.setdefault(ln.script, []).append(ln)
     results = []
     for d in json.loads((work / "project.json").read_text(encoding="utf-8")):
@@ -83,11 +83,24 @@ def load_project(out_dir: Path) -> tuple[dict, list[LineResult]]:
 
 def run(audio: Path, table_files: list[Path], out_dir: Path, cache_dir: Path, cfg: MatchConfig | None = None,
         use_hint: bool = False, do_align: bool = True, do_export: bool = True, pad: float = 0.15,
-        overwrite: bool = False, log: Callable[[str], None] = print) -> list[LineResult]:
+        overwrite: bool = False, who: str | None = None, log: Callable[[str], None] = print) -> list[LineResult]:
+    """`who`: czyje kwestie są w nagraniu, "npc" albo "main" (Czy MC = TAK); None = wszystkie z arkusza."""
     cfg = cfg or MatchConfig()
     work = prepare_work_dir(out_dir)
 
     lines = tables.load_all(table_files)
+    if who is not None:
+        try:
+            chosen = tables.select_role(lines, who)
+        except ValueError as e:
+            log(f"BŁĄD: {e}")
+            raise SystemExit(1) from e
+        if who == "npc" and not any(l.is_main for l in lines):
+            log("Arkusz nie oznacza kwestii MC, biorę wszystkie kwestie.")
+        else:
+            other = tables.ROLE_LABEL["main" if who == "npc" else "npc"]
+            log(f"Nagranie aktora {tables.ROLE_LABEL[who]}: pominięto {len(lines) - len(chosen)} kwestii {other}")
+        lines = chosen
     log(f"Kwestie: {len(lines)} ({sum(l.kind != 'speech' for l in lines)} niewerbalnych/głosowych)")
     for name, idxs in tables.duplicate_scripts(lines).items():
         log(f"UWAGA: nazwa skryptu '{name}' powtarza się w wierszach {idxs}")
@@ -99,7 +112,7 @@ def run(audio: Path, table_files: list[Path], out_dir: Path, cache_dir: Path, cf
                                   progress=lambda t, total: log(f"  {t / 60:.1f}/{total / 60:.1f} min"))
     log(f"Słów: {len(words)}")
     (work / "meta.json").write_text(json.dumps({
-        "audio": str(audio.resolve()), "tables": [str(Path(t).resolve()) for t in table_files], "pad": pad,
+        "audio": str(audio.resolve()), "tables": [str(Path(t).resolve()) for t in table_files], "pad": pad, "who": who,
     }, ensure_ascii=False, indent=1), encoding="utf-8")
 
     log("Dopasowanie...")

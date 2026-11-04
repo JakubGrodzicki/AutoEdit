@@ -19,7 +19,7 @@ import soundfile as sf
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rapidfuzz import fuzz  # noqa: E402
 
-from autoedit import export, pipeline  # noqa: E402
+from autoedit import export, pipeline, tables  # noqa: E402
 from autoedit.normalize import normalize  # noqa: E402
 from build_truth import load_edit16  # noqa: E402
 
@@ -54,8 +54,9 @@ def main() -> None:
     asr = WhisperModel("large-v3", device="cuda", compute_type="float16")
 
     counts = {s: sum(r.status == s for r in results) for s in ("auto", "przegląd", "brak")}
-    missing = [r.line.script for r in results if r.status == "brak" and not r.line.is_main]
-    print(f"Statusy: {counts}. Bez wyniku (NPC): {len(missing)} {missing[:8]}")
+    who = meta.get("who")  # projekt z wybranym aktorem ma już tylko jego kwestie
+    missing = [r.line.script for r in results if r.status == "brak" and (who or not r.line.is_main)]
+    print(f"Statusy: {counts}. Bez wyniku ({tables.ROLE_LABEL[who or 'npc']}): {len(missing)} {missing[:8]}")
     n = low = in_speech = zeros_end = zeros_start = jumps = overlaps = 0
     prev: tuple[float, float] | None = None
     with tempfile.TemporaryDirectory() as tmp:

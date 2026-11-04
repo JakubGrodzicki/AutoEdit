@@ -41,6 +41,22 @@ def test_section_header_rows_are_not_lines(tmp_path):
     assert not lines[0].is_main and lines[1].is_main
 
 
+def test_select_role_keeps_one_actor_and_renumbers(tmp_path):
+    import pytest
+    from autoedit.tables import select_role
+    p = tmp_path / "a.csv"
+    p.write_text("Skrypt;Postać;Czy MC;Treść\nVO_001;Kupiec;NIE;Witaj.\nVO_002;Gracz;TAK;Tak.\n"
+                 "VO_003;Kupiec;NIE;Coś kupujesz?\n", encoding="utf-8")
+    lines = load_lines(p)
+    assert select_role(lines, None) is lines
+    # kolejna kwestia NPC po przerwie na MC musi mieć idx + 1, inaczej ścieżka nie da premii za kolejność
+    assert [(l.idx, l.script) for l in select_role(lines, "npc")] == [(0, "VO_001"), (1, "VO_003")]
+    assert [(l.idx, l.script) for l in select_role(lines, "main")] == [(0, "VO_002")]
+    assert [l.idx for l in lines] == [0, 1, 2]  # oryginalne wiersze bez zmian
+    with pytest.raises(ValueError):
+        select_role([l for l in lines if not l.is_main], "main")
+
+
 def test_speech_map_keeps_first_word_after_pause_in_its_chunk():
     from autoedit.transcribe import SR, SpeechMap
     m = SpeechMap([{"start": 1 * SR, "end": 3 * SR}, {"start": 8 * SR, "end": 10 * SR}])
