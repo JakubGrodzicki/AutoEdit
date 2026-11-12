@@ -102,3 +102,16 @@ def test_find_holes_reports_voiced_stretch_without_words():
     a[SR * 15:SR * 18] += (0.2 * np.sin(np.arange(SR * 3) / 20)).astype(np.float32)  # mowa bez słów
     holes = find_holes(a, [Word("x", 5.0, 8.0)])
     assert len(holes) == 1 and 14.8 <= holes[0][0] <= 15.2 and 17.8 <= holes[0][1] <= 18.2
+
+
+def test_csv_separator_when_sniffer_fails(tmp_path):
+    """csv.Sniffer rzuca 'Could not determine delimiter' na części plików; separator wykrywamy sami."""
+    from autoedit import tables
+    for name, text in {
+        "a.csv": 'TYTUŁ;NPC;MAIN;LINE\nA_01;Lud;NIE;"Cześć, kim jesteś?"\nA_02;Lud;NIE;"Idź, precz"\n',
+        "b.csv": 'A_01\tLud\tNIE\tTekst, z przecinkami. Dwukropek: tak\nA_02\tLud\tNIE\tInny\n',
+        "c.csv": "A_01\nA_02\n",
+    }.items():
+        p = tmp_path / name
+        p.write_text(text, encoding="utf-8")
+        assert len(tables.load_lines(p)) == 2

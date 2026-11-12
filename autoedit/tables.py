@@ -41,13 +41,34 @@ def _rows(path: Path) -> list[list[str]]:
         rows = [["" if c is None else str(c).strip() for c in r] for r in ws.iter_rows(values_only=True)]
         wb.close()
         return rows
+    if path.suffix.lower() in (".xls", ".xlsb", ".ods", ".numbers"):
+        raise ValueError(f"Format {path.suffix} nie jest obsługiwany ({path.name}). "
+                         "Zapisz arkusz jako .xlsx albo .csv.")
     raw = path.read_bytes()
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         text = raw.decode("cp1250")
-    dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|")
-    return [[c.strip() for c in r] for r in csv.reader(text.splitlines(), dialect)]
+    return [[c.strip() for c in r] for r in csv.reader(text.splitlines(), delimiter=_delimiter(text))]
+
+
+def _delimiter(text: str) -> str:
+    """Separator CSV. Najpierw csv.Sniffer; gdy się poddaje (częste), wybieramy znak, który w pierwszych liniach
+    występuje najczęściej i w tej samej liczbie. Brak separatora = plik jednokolumnowy."""
+    try:
+        return csv.Sniffer().sniff(text[:4096], delimiters=",;\t|").delimiter
+    except csv.Error:
+        pass
+    sample = [ln for ln in text.splitlines()[:30] if ln.strip()]
+    best, best_score = ",", 0
+    for d in ";\t,|":
+        counts = [ln.count(d) for ln in sample]
+        if not counts or not max(counts):
+            continue
+        score = sum(c > 0 for c in counts) * 1000 + sum(c == counts[0] for c in counts)
+        if score > best_score:
+            best, best_score = d, score
+    return best
 
 
 def load_lines(path: str | Path, columns: dict[str, int] | None = None, start_idx: int = 0) -> list[Line]:
