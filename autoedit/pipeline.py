@@ -107,6 +107,8 @@ def run(audio: Path, table_files: list[Path], out_dir: Path, cache_dir: Path, cf
 
     wav16 = transcribe.prepare_audio(audio, cache_dir)
     hint = transcribe.build_hint(lines) if use_hint else None
+    from . import device
+    device.on_warning(lambda m: m.startswith("UWAGA") and log(m))  # ostrzeżenie o CPU trafia też do logu GUI
     log("Transkrypcja (cache jeśli już była)...")
     words = transcribe.transcribe(wav16, cache_dir, hint=hint,
                                   progress=lambda t, total: log(f"  {t / 60:.1f}/{total / 60:.1f} min"))

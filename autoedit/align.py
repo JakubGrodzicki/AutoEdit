@@ -75,8 +75,9 @@ def ctc_viterbi(lp: np.ndarray, targets: list[int], blank: int, gap_penalty: flo
 
 
 class Aligner:
-    def __init__(self, device: str = "cuda"):
-        self.device = device
+    def __init__(self, device: str | None = None):
+        from .device import pick_device
+        self.device = device = device or pick_device()
         with open(hf_hub_download(ALIGN_MODEL, "vocab.json"), encoding="utf-8") as f:
             self.vocab: dict[str, int] = json.load(f)
         self.blank = self.vocab["<pad>"]

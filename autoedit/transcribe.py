@@ -166,10 +166,27 @@ def transcribe(wav16: Path, cache_dir: str | Path, model: str = "large-v3", hint
     if cp.exists():
         return set_norms([Word(**d) for d in json.loads(cp.read_text(encoding="utf-8"))])
 
+    from . import device as dev
+
+    try:
+        words = _run_asr(wav16, model, hint, progress, dev.pick_device())
+    except Exception as e:  # CUDA potrafi paść dopiero przy pierwszym przebiegu (np. brak cublas64_12.dll)
+        if dev.pick_device() != "cuda" or not dev.is_cuda_error(e):
+            raise
+        dev.force_cpu(str(e).splitlines()[0])
+        words = _run_asr(wav16, model, hint, progress, "cpu")
+    cp.write_text(json.dumps([{"text": w.text, "start": w.start, "end": w.end} for w in words],
+                             ensure_ascii=False), encoding="utf-8")
+    return set_norms(words)
+
+
+def _run_asr(wav16: Path, model: str, hint: str | None, progress, device: str) -> list[Word]:
+    from . import device as dev
+    dev.prepare_cuda_dlls()
     from faster_whisper import WhisperModel
     from faster_whisper.vad import VadOptions, collect_chunks, get_speech_timestamps
 
-    asr = WhisperModel(model, device="cuda", compute_type="float16")
+    asr = WhisperModel(model, device=device, compute_type=dev.whisper_compute_type(device))
     audio = load_audio16(wav16)
     total = len(audio) / SR
     words: list[Word] = []
@@ -188,7 +205,4 @@ def transcribe(wav16: Path, cache_dir: str | Path, model: str = "large-v3", hint
                     words.append(Word(text=w.word.strip(), start=off + s, end=off + e))
         if progress:
             progress(b / SR, total)
-    words = fill_holes(asr, audio, words, progress)
-    cp.write_text(json.dumps([{"text": w.text, "start": w.start, "end": w.end} for w in words],
-                             ensure_ascii=False), encoding="utf-8")
-    return set_norms(words)
+    return fill_holes(asr, audio, words, progress)

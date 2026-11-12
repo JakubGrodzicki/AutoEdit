@@ -36,13 +36,15 @@ do żadnej usługi. Modele pobiera tylko `scripts/download_models.py`.
 ## Wymagania
 
 - Windows 10/11, Python 3.12 i `ffmpeg` w `PATH` (skrypt instalacyjny doinstaluje je przez winget, jeśli ich brakuje)
-- karta NVIDIA z CUDA 12.x (testowane: RTX 3080 Ti 12 GB, CUDA 12.4)
+- karta NVIDIA z aktualnym sterownikiem (CUDA 12.x; testowane: RTX 3080 Ti 12 GB). Bez karty program działa na CPU,
+  z ostrzeżeniem i znacznie wolniej (wymuszenie CPU: zmienna `AUTOEDIT_DEVICE=cpu`). Biblioteki CUDA (cuBLAS, cuDNN)
+  i Visual C++ Redistributable instaluje skrypt, nie trzeba osobno instalować CUDA Toolkit.
 
 ## Instalacja
 
-Jeden skrypt robi wszystko: instaluje (przez winget) Pythona 3.12 i ffmpeg, jeśli ich brakuje, tworzy `.venv`,
+Jeden skrypt robi wszystko: instaluje (przez winget) Pythona 3.12, ffmpeg i Visual C++ Redistributable, jeśli ich brakuje, tworzy `.venv`,
 instaluje PyTorch z CUDA 12.8 i pozostałe pakiety, pobiera modele do cache Hugging Face
-(`%USERPROFILE%\.cache\huggingface\hub`) i na końcu sprawdza, czy Whisper i wav2vec2 działają razem na GPU.
+(`%USERPROFILE%\.cache\huggingface\hub`) i na końcu sprawdza, czy Whisper i wav2vec2 działają razem na GPU (albo, gdy GPU nie ma, na CPU, z ostrzeżeniem).
 
 ```bash
 install.bat

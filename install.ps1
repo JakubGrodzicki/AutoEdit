@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Instalacja AutoEdit: Python 3.12, ffmpeg, środowisko .venv, pakiety, modele i test GPU.
+    Instalacja AutoEdit: Python 3.12, ffmpeg, Visual C++, środowisko .venv, pakiety, biblioteki CUDA, modele i test środowiska.
 
 .DESCRIPTION
     Skrypt można uruchamiać wielokrotnie: pomija to, co już jest zainstalowane, a pobieranie modeli wznawia.
@@ -9,7 +9,7 @@
 
 .PARAMETER CheckOnly   Tylko sprawdza wymagania i pokazuje plan, niczego nie instaluje.
 .PARAMETER SkipModels  Pomija pobieranie modeli.
-.PARAMETER SkipTest    Pomija test GPU i testy jednostkowe na końcu.
+.PARAMETER SkipTest    Pomija test środowiska i testy jednostkowe na końcu.
 .PARAMETER Recreate    Usuwa i tworzy od nowa środowisko .venv.
 .PARAMETER LauncherOnly   Tylko buduje AutoEdit.exe (dwuklik zamiast terminala), nic więcej nie instaluje.
 .PARAMETER DesktopShortcut   Dodatkowo tworzy skrót AutoEdit na pulpicie.
@@ -32,7 +32,8 @@ Set-Location -LiteralPath $PSScriptRoot
 
 $TorchVersion = '2.11.0'
 $TorchIndex   = 'https://download.pytorch.org/whl/cu128'   # CUDA 12.8; działa na sterownikach z CUDA 12.x i nowszych
-$NeedFreeGB   = 12                                          # torch ok. 3 GB + modele ok. 4,5 GB + zapas
+$MinDriver    = 528                                         # najstarszy sterownik NVIDIA z CUDA 12.x (minor version compatibility)
+$NeedFreeGB   = 12                                        # torch ok. 3 GB + modele ok. 4,5 GB + zapas
 $VenvDir      = Join-Path $PSScriptRoot '.venv'
 $VenvPy       = Join-Path $VenvDir 'Scripts\python.exe'
 
@@ -105,9 +106,23 @@ else { Ok "Miejsce na dysku: $freeGB GB wolne" }
 $gpuOk = $false
 if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
     $gpu = (& nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>$null | Select-Object -First 1)
-    if ($gpu) { Ok "Karta NVIDIA: $gpu"; $gpuOk = $true }
+    if ($gpu) {
+        Ok "Karta NVIDIA: $gpu"; $gpuOk = $true
+        $drv = ($gpu -split ',')[-1].Trim()
+        if ($drv -match '^\d+(\.\d+)?' -and [double]$Matches[0] -lt $MinDriver) {
+            Warn "Sterownik NVIDIA $drv jest za stary dla CUDA 12 (wymagany co najmniej $MinDriver). Zaktualizuj go (nvidia.com/drivers), inaczej program użyje CPU."
+        }
+    }
 }
-if (-not $gpuOk) { Warn 'Nie wykryto karty NVIDIA (nvidia-smi). Program wymaga GPU z CUDA 12.x i aktualnego sterownika.' }
+if (-not $gpuOk) { Warn 'Nie wykryto karty NVIDIA (nvidia-smi). Program będzie działał na CPU, znacznie wolniej (nagranie godzinne to nawet kilka godzin).' }
+
+# Visual C++ Redistributable: wymagany przez PyTorch i CTranslate2 (bez niego DLL-e nie chcą się załadować).
+function Have-VCRedist {
+    $k = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
+    [bool]((Test-Path $k) -and ((Get-ItemProperty $k -ErrorAction SilentlyContinue).Installed -eq 1))
+}
+$vcOk = Have-VCRedist
+if ($vcOk) { Ok 'Visual C++ Redistributable 2015-2022 (x64)' } else { Warn 'Brak Visual C++ Redistributable (zostanie zainstalowany).' }
 
 $py = Find-Python312
 if ($py) { Ok "Python 3.12: $py" } else { Warn 'Brak Pythona 3.12 (zostanie zainstalowany przez winget).' }
@@ -133,6 +148,19 @@ if (-not $py) {
     $py = Find-Python312
     if (-not $py) { Fail 'Python 3.12 został zainstalowany, ale nie można go znaleźć. Uruchom skrypt ponownie w nowym oknie terminala.' }
     Ok "Python 3.12: $py"
+}
+
+if (-not $vcOk) {
+    Step 'Instalacja Visual C++ Redistributable 2015-2022 (x64)'
+    if (Have-Winget) {
+        # kod 0 = zainstalowano, -1978335189 = już jest aktualny
+        & winget install --id Microsoft.VCRedist.2015+.x64 -e --silent --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
+            Warn "Instalacja Visual C++ Redistributable nie powiodła się (kod $LASTEXITCODE). Pobierz ją z https://aka.ms/vs/17/release/vc_redist.x64.exe, jeśli program zgłosi brak DLL."
+        } else { Ok 'Visual C++ Redistributable zainstalowany' }
+    } else {
+        Warn 'Brak winget: zainstaluj https://aka.ms/vs/17/release/vc_redist.x64.exe ręcznie, jeśli program zgłosi brak DLL.'
+    }
 }
 
 if (-not $ffmpegOk) {
@@ -175,6 +203,18 @@ Write-Host '   (pierwsza instalacja pobiera m.in. PySide6 i faster-whisper, moż
 Run $VenvPy @('-m', 'pip', 'install', '--quiet', '-r', (Join-Path $PSScriptRoot 'requirements.txt')) 'Instalacja pakietów nie powiodła się'
 Ok 'Pakiety zainstalowane'
 
+# Biblioteki CUDA dla faster-whisper (CTranslate2): cuBLAS 12 i cuDNN 9. Zwykle są już w torch\lib (wheel cu128),
+# ale gdy ich tam brak, doinstalowujemy z PyPI. Program sam dodaje te foldery do ścieżki DLL (autoedit\device.py),
+# więc nie trzeba instalować CUDA Toolkit ani zmieniać PATH.
+Step 'Biblioteki CUDA (cuBLAS 12, cuDNN 9)'
+$torchLib = Join-Path $VenvDir 'Lib\site-packages\torch\lib'
+$missing = @('cublas64_12.dll', 'cudnn64_9.dll') | Where-Object { -not (Test-Path (Join-Path $torchLib $_)) }
+if ($missing) {
+    Warn "W torch\lib brak: $($missing -join ', '). Doinstalowuję pakiety nvidia-*."
+    Run $VenvPy @('-m', 'pip', 'install', '--quiet', 'nvidia-cublas-cu12', 'nvidia-cudnn-cu12==9.*') 'Instalacja bibliotek CUDA (nvidia-cublas-cu12, nvidia-cudnn-cu12) nie powiodła się'
+}
+Ok 'cuBLAS 12 i cuDNN 9 dostępne dla programu'
+
 # ---------------------------------------------------------------- modele
 if ($SkipModels) {
     Warn 'Pominięto pobieranie modeli (-SkipModels).'
@@ -197,7 +237,7 @@ if ($SkipModels) {
 if ($SkipTest) {
     Warn 'Pominięto testy (-SkipTest).'
 } else {
-    Step 'Test GPU: Whisper i wav2vec2 w jednym procesie'
+    Step 'Test środowiska: Whisper i wav2vec2 w jednym procesie (GPU lub CPU)'
     $env:HF_HUB_OFFLINE = '1'
     # Windows PowerShell 5.1 traktuje tekst na stderr (ostrzeżenia torch) jak błąd, więc na czas testu go łagodzimy.
     $ErrorActionPreference = 'Continue'
@@ -206,9 +246,14 @@ if ($SkipTest) {
     $ErrorActionPreference = 'Stop'
     if ($smokeExit -ne 0 -or $out -notmatch '(?m)^OK\s*$') {
         Write-Host $out
-        Fail 'Test GPU nie przeszedł. Sprawdź sterownik NVIDIA i komunikaty powyżej.'
+        Fail 'Test środowiska nie przeszedł. Sprawdź komunikaty powyżej (sterownik NVIDIA, Visual C++, miejsce na dysku).'
     }
-    Ok (($out -split "`r?`n" | Where-Object { $_ -match 'VRAM' } | Select-Object -First 1))
+    if ($out -match '(?m)^DEVICE cpu') {
+        $why = ($out -split "`r?`n" | Where-Object { $_ -match '^UWAGA' } | Select-Object -First 1)
+        Warn "Program będzie działał na CPU (znacznie wolniej). $why"
+    } else {
+        Ok (($out -split "`r?`n" | Where-Object { $_ -match 'VRAM' } | Select-Object -First 1))
+    }
 
     Step 'Testy jednostkowe'
     Run $VenvPy @('-m', 'pytest', '-q', 'tests') 'Testy jednostkowe nie przeszły'
