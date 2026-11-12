@@ -6,11 +6,12 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, QSettings
+from PySide6.QtCore import QProcess, QProcessEnvironment, QSettings, Qt
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
-                               QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                               QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from .. import export, pipeline, tables
 from ..models import Candidate, LineResult
@@ -47,6 +48,13 @@ class NewProjectDialog(QDialog):
             b = QPushButton("Wybierz…")
             b.clicked.connect(fn)
             row.addWidget(b)
+            if edit is self.tables:
+                split_btn = QToolButton()
+                split_btn.setText("✕")
+                split_btn.setToolTip("Rozbij arkusz")
+                split_btn.setFixedSize(b.sizeHint().height(), b.sizeHint().height())
+                split_btn.clicked.connect(self.split_sheet)
+                row.addWidget(split_btn)
             form.addRow(label, row)
         self.who = QComboBox()  # kwestie drugiego aktora z tego samego arkusza nie biorą udziału w dopasowaniu
         self.who.addItem("NPC (Czy MC = NIE)", "npc")
@@ -78,6 +86,29 @@ class NewProjectDialog(QDialog):
         fs, _ = QFileDialog.getOpenFileNames(self, "Tabele z kwestiami", "", "Tabele (*.xlsx *.xlsm *.csv)")
         if fs:
             self.tables.setText(";".join(fs))
+
+    def split_sheet(self) -> None:
+        """Rozbija skoroszyt (jeden arkusz na postać) na osobne pliki i wstawia je jako tabele projektu."""
+        f, _ = QFileDialog.getOpenFileName(self, "Skoroszyt do rozbicia", "", "Skoroszyt Excela (*.xlsx *.xlsm)")
+        if not f:
+            return
+        src = Path(f)
+        d = QFileDialog.getExistingDirectory(self, "Folder na rozbite arkusze", str(src.parent))
+        if not d:
+            return
+        out_dir = Path(d) / f"{src.stem}_arkusze"
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            files = tables.split_workbook(src, out_dir)
+        except Exception as e:  # uszkodzony lub zablokowany plik, brak uprawnień
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Nie udało się rozbić arkusza", str(e))
+            return
+        QApplication.restoreOverrideCursor()
+        self.tables.setText(";".join(str(p) for p in files))
+        QMessageBox.information(self, "Rozbito arkusz",
+                                f"Utworzono {len(files)} plik(ów) w folderze:\n{out_dir}\n\n"
+                                "Wstawiono je jako tabele projektu - usuń z listy te, których nie potrzebujesz.")
 
     def pick_out(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Folder wynikowy")

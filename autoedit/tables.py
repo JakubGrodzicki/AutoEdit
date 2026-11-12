@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -84,7 +85,39 @@ def load_all(paths: list[str | Path]) -> list[Line]:
     return lines
 
 
-ROLE_LABEL = {"npc": "NPC", "main": "MC"}
+def _safe_name(name: str) -> str:
+    return re.sub(r'[<>:"/\\|?*]', "_", name).strip().rstrip(".") or "arkusz"
+
+
+def split_workbook(src: str | Path, out_dir: str | Path) -> list[Path]:
+    """Rozbija skoroszyt na osobne pliki .xlsx, po jednym na arkusz (z zachowaniem formatowania)."""
+    src, out_dir = Path(src), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wb = openpyxl.load_workbook(src, read_only=True)
+    names = wb.sheetnames
+    wb.close()
+    used: set[str] = set()
+    out: list[Path] = []
+    for name in names:
+        # Świeży odczyt dla każdego arkusza, żeby zachować szerokości kolumn, scalone komórki itp.
+        wb = openpyxl.load_workbook(src)
+        for other in wb.sheetnames:
+            if other != name:
+                del wb[other]
+        base = _safe_name(name)
+        fname, i = base, 2
+        while fname.casefold() in used:  # nazwy plików w Windows nie rozróżniają wielkości liter
+            fname = f"{base}_{i}"
+            i += 1
+        used.add(fname.casefold())
+        target = out_dir / f"{fname}.xlsx"
+        wb.save(target)
+        wb.close()
+        out.append(target)
+    return out
+
+
+ROLE_LABEL ={"npc": "NPC", "main": "MC"}
 
 
 def select_role(lines: list[Line], who: str | None) -> list[Line]:
