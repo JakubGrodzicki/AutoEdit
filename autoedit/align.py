@@ -76,18 +76,39 @@ def ctc_viterbi(lp: np.ndarray, targets: list[int], blank: int, gap_penalty: flo
 
 class Aligner:
     def __init__(self, device: str | None = None):
-        from .device import pick_device
-        self.device = device = device or pick_device()
+        from .device import torch_device
+        self.device = device or torch_device()
         with open(hf_hub_download(ALIGN_MODEL, "vocab.json"), encoding="utf-8") as f:
             self.vocab: dict[str, int] = json.load(f)
         self.blank = self.vocab["<pad>"]
-        self.model = Wav2Vec2ForCTC.from_pretrained(ALIGN_MODEL).to(device).eval()
+        self.model = Wav2Vec2ForCTC.from_pretrained(ALIGN_MODEL).eval()
+        try:
+            self.model.to(self.device)
+        except Exception as e:
+            self._fallback_to_cpu(e)
+
+    def _fallback_to_cpu(self, e: BaseException) -> None:
+        """Błąd CUDA (np. brak pamięci albo kernela dla tej karty): reszta wyrównania idzie na CPU."""
+        from .device import TORCH, force_cpu, is_cuda_error
+        if self.device == "cpu" or not is_cuda_error(e):
+            raise e
+        force_cpu(str(e).splitlines()[0], (TORCH,))
+        self.device = "cpu"
+        self.model.to("cpu")
+        torch.cuda.empty_cache()
+
+    def _forward(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.inference_mode():
+            return self.model(x[None].to(self.device)).logits
 
     def _log_probs(self, audio: np.ndarray) -> torch.Tensor:
         x = torch.from_numpy(audio.astype(np.float32))
         x = (x - x.mean()) / torch.sqrt(x.var() + 1e-7)
-        with torch.inference_mode():
-            logits = self.model(x[None].to(self.device)).logits
+        try:
+            logits = self._forward(x)
+        except Exception as e:  # ponawiamy tylko to okno, już na CPU
+            self._fallback_to_cpu(e)
+            logits = self._forward(x)
         return torch.log_softmax(logits.float(), dim=-1)[0].cpu()
 
     def _targets(self, norm: str) -> list[int]:

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 from bisect import bisect_left
 from pathlib import Path
@@ -31,6 +33,22 @@ def file_key(path: Path) -> str:
     return h.hexdigest()[:16]
 
 
+def ffmpeg_exe() -> str:
+    """Ścieżka do ffmpeg. Gdy instalator dodał go przez winget, a Eksplorator (i uruchomiony z niego program)
+    ma jeszcze stary PATH, szukamy go w folderach winget."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    winget = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet"
+    link = winget / "Links" / "ffmpeg.exe"
+    if link.is_file():
+        return str(link)
+    for exe in sorted((winget / "Packages").glob("Gyan.FFmpeg*/**/bin/ffmpeg.exe")):
+        return str(exe)
+    raise FileNotFoundError("Nie znaleziono programu ffmpeg. Uruchom install.bat, a jeśli instalacja go już dodała, "
+                            "wyloguj się i zaloguj ponownie do Windows.")
+
+
 def prepare_audio(path: str | Path, cache_dir: str | Path) -> Path:
     """Kopia 16 kHz mono PCM16 do analizy (tylko do analizy, nie do eksportu)."""
     path, cache_dir = Path(path), Path(cache_dir)
@@ -39,7 +57,7 @@ def prepare_audio(path: str | Path, cache_dir: str | Path) -> Path:
     if not out.exists():
         tmp = out.with_suffix(".tmp.wav")
         subprocess.run(
-            ["ffmpeg", "-y", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(SR),
+            [ffmpeg_exe(), "-y", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(SR),
              "-c:a", "pcm_s16le", str(tmp)], check=True)
         tmp.replace(out)
     return out
@@ -168,12 +186,13 @@ def transcribe(wav16: Path, cache_dir: str | Path, model: str = "large-v3", hint
 
     from . import device as dev
 
+    device = dev.whisper_device()
     try:
-        words = _run_asr(wav16, model, hint, progress, dev.pick_device())
+        words = _run_asr(wav16, model, hint, progress, device)
     except Exception as e:  # CUDA potrafi paść dopiero przy pierwszym przebiegu (np. brak cublas64_12.dll)
-        if dev.pick_device() != "cuda" or not dev.is_cuda_error(e):
+        if device != "cuda" or not dev.is_cuda_error(e):
             raise
-        dev.force_cpu(str(e).splitlines()[0])
+        dev.force_cpu(str(e).splitlines()[0], (dev.WHISPER,))  # wyrównanie ma własny fallback
         words = _run_asr(wav16, model, hint, progress, "cpu")
     cp.write_text(json.dumps([{"text": w.text, "start": w.start, "end": w.end} for w in words],
                              ensure_ascii=False), encoding="utf-8")

@@ -35,10 +35,19 @@ do żadnej usługi. Modele pobiera tylko `scripts/download_models.py`.
 
 ## Wymagania
 
-- Windows 10/11, Python 3.12 i `ffmpeg` w `PATH` (skrypt instalacyjny doinstaluje je przez winget, jeśli ich brakuje)
-- karta NVIDIA z aktualnym sterownikiem (CUDA 12.x; testowane: RTX 3080 Ti 12 GB). Bez karty program działa na CPU,
-  z ostrzeżeniem i znacznie wolniej (wymuszenie CPU: zmienna `AUTOEDIT_DEVICE=cpu`). Biblioteki CUDA (cuBLAS, cuDNN)
-  i Visual C++ Redistributable instaluje skrypt, nie trzeba osobno instalować CUDA Toolkit.
+- Windows 10/11 64-bit (x64) z `winget` (jest w Windows 11 i aktualnym Windows 10). Bez `winget` zainstaluj ręcznie
+  Pythona 3.12 i `ffmpeg`, resztę zrobi skrypt. Wolne miejsce: ok. 12 GB (PyTorch ok. 3 GB, modele ok. 4,5 GB).
+- Karta graficzna (opcjonalnie, ale bardzo przyspiesza):
+  - **NVIDIA GTX 16xx / RTX 20xx lub nowsza, co najmniej 6 GB pamięci:** wszystko na GPU (testowane: RTX 3080 Ti 12 GB);
+  - **mniej niż 6 GB pamięci:** transkrypcja w lżejszym trybie int8, poniżej 3 GB wyrównanie idzie na CPU;
+  - **starsza NVIDIA (np. GTX 10xx):** transkrypcja na GPU, wyrównanie na CPU (PyTorch nie ma kerneli dla tych kart);
+  - **brak karty NVIDIA (AMD, Intel, laptop bez GPU):** wszystko na CPU, znacznie wolniej (nagranie godzinne to nawet
+    kilka godzin).
+
+  Program sam wybiera urządzenie i pokazuje ostrzeżenie, gdy coś idzie na CPU. Gdy CUDA zawiedzie w trakcie pracy
+  (np. brak pamięci), przełącza się na CPU zamiast przerywać. Wymuszenie CPU: zmienna `AUTOEDIT_DEVICE=cpu`.
+  Biblioteki CUDA (cuBLAS, cuDNN) i Visual C++ Redistributable instaluje skrypt, nie trzeba instalować CUDA Toolkit;
+  wystarczy aktualny sterownik NVIDIA (co najmniej 528).
 
 ## Instalacja
 
@@ -55,6 +64,10 @@ albo bezpośrednio:
 ```bash
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
+
+Kod pobrany z GitHuba jako ZIP: przed rozpakowaniem kliknij plik prawym przyciskiem, **Właściwości → Odblokuj**.
+Jeśli przy `install.bat` pojawi się okno „System Windows ochronił ten komputer”, wybierz
+**Więcej informacji → Uruchom mimo to**.
 
 Skrypt można uruchamiać wielokrotnie: pomija to, co już jest, a pobieranie modeli wznawia. Parametry:
 `-CheckOnly` (tylko sprawdza wymagania), `-SkipModels`, `-SkipTest`, `-Recreate` (buduje `.venv` od nowa),

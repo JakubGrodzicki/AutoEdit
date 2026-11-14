@@ -32,7 +32,8 @@ Set-Location -LiteralPath $PSScriptRoot
 
 $TorchVersion = '2.11.0'
 $TorchIndex   = 'https://download.pytorch.org/whl/cu128'   # CUDA 12.8; działa na sterownikach z CUDA 12.x i nowszych
-$MinDriver    = 528                                         # najstarszy sterownik NVIDIA z CUDA 12.x (minor version compatibility)
+$MinComputeCap = 7.5                                        # najstarsza karta z kernelami w PyTorch cu128 (sm_75)
+$MinDriver    = 528                                        # najstarszy sterownik NVIDIA z CUDA 12.x (minor version compatibility)
 $NeedFreeGB   = 12                                        # torch ok. 3 GB + modele ok. 4,5 GB + zapas
 $VenvDir      = Join-Path $PSScriptRoot '.venv'
 $VenvPy       = Join-Path $VenvDir 'Scripts\python.exe'
@@ -111,6 +112,15 @@ if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
         $drv = ($gpu -split ',')[-1].Trim()
         if ($drv -match '^\d+(\.\d+)?' -and [double]$Matches[0] -lt $MinDriver) {
             Warn "Sterownik NVIDIA $drv jest za stary dla CUDA 12 (wymagany co najmniej $MinDriver). Zaktualizuj go (nvidia.com/drivers), inaczej program użyje CPU."
+        }
+        $vram = ($gpu -split ',')[1].Trim()
+        if ($vram -match '^\d+' -and [int]$Matches[0] -lt 6000) {
+            Warn "Karta ma $vram pamięci. Transkrypcja użyje lżejszego trybu int8, a przy mniej niż 3 GB wyrównanie pójdzie na CPU."
+        }
+        # compute_cap zna dopiero nowszy nvidia-smi; inna odpowiedź niż liczba = nie wiadomo, bez ostrzeżenia.
+        $cc = (& nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>$null | Select-Object -First 1)
+        if ("$cc".Trim() -match '^\d+\.\d+$' -and [double]$Matches[0] -lt $MinComputeCap) {
+            Warn "Karta ma compute capability $($Matches[0]), a PyTorch z CUDA 12.8 wymaga co najmniej $MinComputeCap (GTX 16xx / RTX 20xx). Transkrypcja pójdzie na GPU, wyrównanie na CPU (wolniej)."
         }
     }
 }
@@ -248,9 +258,10 @@ if ($SkipTest) {
         Write-Host $out
         Fail 'Test środowiska nie przeszedł. Sprawdź komunikaty powyżej (sterownik NVIDIA, Visual C++, miejsce na dysku).'
     }
-    if ($out -match '(?m)^DEVICE cpu') {
+    $dev = ($out -split "`r?`n" | Where-Object { $_ -match '^DEVICE ' } | Select-Object -Last 1)
+    if ($dev -match '=cpu') {
         $why = ($out -split "`r?`n" | Where-Object { $_ -match '^UWAGA' } | Select-Object -First 1)
-        Warn "Program będzie działał na CPU (znacznie wolniej). $why"
+        Warn "Część obliczeń pójdzie na CPU (wolniej): $($dev -replace '^DEVICE ', ''). $why"
     } else {
         Ok (($out -split "`r?`n" | Where-Object { $_ -match 'VRAM' } | Select-Object -First 1))
     }

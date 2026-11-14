@@ -1,7 +1,9 @@
 """Test środowiska: faster-whisper i wav2vec2 (torch) w jednym procesie, na GPU albo (z ostrzeżeniem) na CPU.
 
-Używa tego samego wyboru urządzenia i ładowania bibliotek CUDA (autoedit.device) co program."""
-import json
+Odwzorowuje program: ten sam wybór urządzeń i ładowanie bibliotek CUDA (autoedit.device), Whisper zwalniany przed
+wyrównaniem, wyrównanie przez autoedit.align.Aligner (z jego przejściem na CPU) i krótkie okno, jak w programie.
+Dzięki temu karta z małą pamięcią nie przerywa instalacji, skoro sam program by sobie poradził."""
+import gc
 import sys
 import time
 from pathlib import Path
@@ -12,38 +14,47 @@ import numpy as np
 
 from autoedit import device as dev
 
-DEVICE = dev.pick_device()
-print("DEVICE", DEVICE)
+SR = 16000
 dev.prepare_cuda_dlls()
 
 from faster_whisper import WhisperModel  # noqa: E402
-from huggingface_hub import hf_hub_download  # noqa: E402
+
+
+def whisper_run(device: str) -> None:
+    ctype = dev.whisper_compute_type(device)
+    t = time.time()
+    asr = WhisperModel("large-v3", device=device, compute_type=ctype)
+    print(f"whisper loaded ({device}, {ctype}) {time.time() - t:.1f}s")
+    t = time.time()
+    segs, _ = asr.transcribe(audio, language="pl", word_timestamps=True, vad_filter=True)
+    print("segments:", len(list(segs)), f"{time.time() - t:.1f}s")
+    del asr
+    gc.collect()
+
+
+audio = (np.random.randn(SR * 30) * 0.01).astype(np.float32)
+
+w_dev = dev.whisper_device()
+try:
+    whisper_run(w_dev)
+except Exception as e:  # tak samo jak w transcribe.transcribe
+    if w_dev != "cuda" or not dev.is_cuda_error(e):
+        raise
+    dev.force_cpu(str(e).splitlines()[0], (dev.WHISPER,))
+    w_dev = "cpu"
+    whisper_run(w_dev)
+
 import torch  # noqa: E402
-from transformers import Wav2Vec2ForCTC  # noqa: E402
-
-ALIGN_ID = "jonatasgrosman/wav2vec2-large-xlsr-53-polish"
-
-vocab = json.load(open(hf_hub_download(ALIGN_ID, "vocab.json"), encoding="utf-8"))
-print("vocab size:", len(vocab))
+from autoedit.align import Aligner  # noqa: E402
 
 t = time.time()
-asr = WhisperModel("large-v3", device=DEVICE, compute_type=dev.whisper_compute_type(DEVICE))
-print(f"whisper loaded {time.time() - t:.1f}s")
-
-t = time.time()
-aligner = Wav2Vec2ForCTC.from_pretrained(ALIGN_ID).to(DEVICE).eval()
-print(f"wav2vec2 loaded {time.time() - t:.1f}s")
-
-audio = (np.random.randn(16000 * 30) * 0.01).astype(np.float32)
-t = time.time()
-segs, info = asr.transcribe(audio, language="pl", word_timestamps=True, vad_filter=True)
-print("segments:", len(list(segs)), f"{time.time() - t:.1f}s")
-
-with torch.inference_mode():
-    out = aligner(torch.from_numpy(audio)[None].to(DEVICE)).logits
-print("logits:", tuple(out.shape))
-if DEVICE == "cuda":
+aligner = Aligner()
+print(f"wav2vec2 loaded ({aligner.device}) {time.time() - t:.1f}s")
+lp = aligner._log_probs(audio[:SR * 5])
+print("log-probs:", tuple(lp.shape))
+if aligner.device == "cuda":
     print("VRAM MB:", torch.cuda.max_memory_allocated() // 2**20)
 else:
-    print("VRAM MB: brak GPU, test na CPU")
+    print("VRAM MB: wyrównanie na CPU")
+print(f"DEVICE whisper={w_dev} torch={aligner.device}")  # po ewentualnych fallbackach
 print("OK")
